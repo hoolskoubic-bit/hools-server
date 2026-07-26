@@ -31,7 +31,8 @@ io.on('connection', (socket) => {
             isAttacking: false,
             deadTime: 0,
             map: data.map || 'hriste',
-            level: parseInt(data.level) || 1 // NOVÉ: Záznam levelu při připojení
+            level: parseInt(data.level) || 1, // PŘIDÁNO: Načtení levelu
+            sila: parseInt(data.sila) || 0    // PŘIDÁNO: Načtení síly
         };
     });
 
@@ -40,10 +41,13 @@ io.on('connection', (socket) => {
             players[socket.id].x = parseFloat(data.x);
             players[socket.id].y = parseFloat(data.y);
             players[socket.id].angle = parseFloat(data.angle);
-            if (data.level) players[socket.id].level = parseInt(data.level); // Dynamický update levelu
+            // PŘIDÁNO: Aktualizace statů při pohybu
+            if (data.level !== undefined) players[socket.id].level = parseInt(data.level);
+            if (data.sila !== undefined) players[socket.id].sila = parseInt(data.sila);
         }
     });
 
+    // Přechod mezi lokacemi
     socket.on('changeMap', (newMap) => {
         if (players[socket.id]) {
             players[socket.id].map = newMap;
@@ -58,17 +62,18 @@ io.on('connection', (socket) => {
         setTimeout(() => { if (players[socket.id]) players[socket.id].isAttacking = false; }, 200);
 
         for (let id in players) {
+            // Útok funguje jen pokud jsou hráči na STEJNÉ MAPĚ
             if (id !== socket.id && players[id].hp > 0 && players[id].map === attacker.map) {
                 const victim = players[id];
                 const dist = Math.hypot(attacker.x - victim.x, attacker.y - victim.y);
                 
                 if (dist < 55) {
-                    // --- VÝPOČET ZRANĚNÍ PODLE LEVELŮ ---
+                    // --- VÝPOČET ZRANĚNÍ PODLE LEVELU A SÍLY ---
                     let baseDamage = 25;
                     // Obrana: Každý level oběti nad lvl 1 snižuje zranění o 2 body
                     let defense = (victim.level - 1) * 2;
-                    // Útok: Každý level útočníka nad lvl 1 přidává 1 bod zranění navíc
-                    let attackBonus = (attacker.level - 1) * 1;
+                    // Útok: Level přidává 1 bod, každý bod síly přidává 2 body zranění
+                    let attackBonus = ((attacker.level - 1) * 1) + (attacker.sila * 2);
                     
                     // Finální zranění (nikdy neklesne pod 5 bodů)
                     let finalDamage = Math.max(5, baseDamage - defense + attackBonus);
