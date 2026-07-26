@@ -30,7 +30,8 @@ io.on('connection', (socket) => {
             angle: parseFloat(data.angle) || 0,
             isAttacking: false,
             deadTime: 0,
-            map: data.map || 'hriste' // NOVÉ: Každý hráč má mapu
+            map: data.map || 'hriste',
+            level: parseInt(data.level) || 1 // NOVÉ: Záznam levelu při připojení
         };
     });
 
@@ -39,10 +40,10 @@ io.on('connection', (socket) => {
             players[socket.id].x = parseFloat(data.x);
             players[socket.id].y = parseFloat(data.y);
             players[socket.id].angle = parseFloat(data.angle);
+            if (data.level) players[socket.id].level = parseInt(data.level); // Dynamický update levelu
         }
     });
 
-    // NOVÉ: Přechod mezi lokacemi
     socket.on('changeMap', (newMap) => {
         if (players[socket.id]) {
             players[socket.id].map = newMap;
@@ -57,13 +58,22 @@ io.on('connection', (socket) => {
         setTimeout(() => { if (players[socket.id]) players[socket.id].isAttacking = false; }, 200);
 
         for (let id in players) {
-            // Útok funguje jen pokud jsou hráči na STEJNÉ MAPĚ
             if (id !== socket.id && players[id].hp > 0 && players[id].map === attacker.map) {
                 const victim = players[id];
                 const dist = Math.hypot(attacker.x - victim.x, attacker.y - victim.y);
                 
                 if (dist < 55) {
-                    victim.hp -= 25;
+                    // --- VÝPOČET ZRANĚNÍ PODLE LEVELŮ ---
+                    let baseDamage = 25;
+                    // Obrana: Každý level oběti nad lvl 1 snižuje zranění o 2 body
+                    let defense = (victim.level - 1) * 2;
+                    // Útok: Každý level útočníka nad lvl 1 přidává 1 bod zranění navíc
+                    let attackBonus = (attacker.level - 1) * 1;
+                    
+                    // Finální zranění (nikdy neklesne pod 5 bodů)
+                    let finalDamage = Math.max(5, baseDamage - defense + attackBonus);
+                    
+                    victim.hp -= finalDamage;
                     io.emit('bloodSpatter', { x: victim.x, y: victim.y, map: victim.map });
                     
                     if (victim.hp <= 0) {
