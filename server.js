@@ -29,9 +29,9 @@ io.on('connection', (socket) => {
             maxHp: 100,
             angle: parseFloat(data.angle) || 0,
             isAttacking: false,
-            deadTime: 0
+            deadTime: 0,
+            map: data.map || 'hriste' // NOVÉ: Každý hráč má mapu
         };
-        console.log('Do arény vstoupil: ' + data.name);
     });
 
     socket.on('move', (data) => {
@@ -39,6 +39,13 @@ io.on('connection', (socket) => {
             players[socket.id].x = parseFloat(data.x);
             players[socket.id].y = parseFloat(data.y);
             players[socket.id].angle = parseFloat(data.angle);
+        }
+    });
+
+    // NOVÉ: Přechod mezi lokacemi
+    socket.on('changeMap', (newMap) => {
+        if (players[socket.id]) {
+            players[socket.id].map = newMap;
         }
     });
 
@@ -50,13 +57,14 @@ io.on('connection', (socket) => {
         setTimeout(() => { if (players[socket.id]) players[socket.id].isAttacking = false; }, 200);
 
         for (let id in players) {
-            if (id !== socket.id && players[id].hp > 0) {
+            // Útok funguje jen pokud jsou hráči na STEJNÉ MAPĚ
+            if (id !== socket.id && players[id].hp > 0 && players[id].map === attacker.map) {
                 const victim = players[id];
                 const dist = Math.hypot(attacker.x - victim.x, attacker.y - victim.y);
                 
                 if (dist < 55) {
                     victim.hp -= 25;
-                    io.emit('bloodSpatter', { x: victim.x, y: victim.y });
+                    io.emit('bloodSpatter', { x: victim.x, y: victim.y, map: victim.map });
                     
                     if (victim.hp <= 0) {
                         io.to(socket.id).emit('killConfirmed');
@@ -64,20 +72,27 @@ io.on('connection', (socket) => {
                         victim.deadTime = Date.now();
                         
                         setTimeout(() => {
-                            if (players[id]) {
+                            if (players[id] && players[id].hp <= 0) {
                                 players[id].hp = 100;
                                 players[id].x = Math.random() * 800 + 100;
                                 players[id].y = Math.random() * 400 + 100;
                             }
-                        }, 3000);
+                        }, 60000); 
                     }
                 }
             }
         }
     });
 
+    socket.on('forceRespawn', () => {
+        if (players[socket.id] && players[socket.id].hp <= 0) {
+            players[socket.id].hp = 100;
+            players[socket.id].x = Math.random() * 800 + 100;
+            players[socket.id].y = Math.random() * 400 + 100;
+        }
+    });
+
     socket.on('disconnect', () => {
-        console.log('Hráč odešel z arény: ' + socket.id);
         delete players[socket.id];
     });
 });
@@ -86,8 +101,7 @@ setInterval(() => {
     io.emit('updateState', players);
 }, 1000 / 60);
 
-const PORT = 3000;
-// 0.0.0.0 otevírá server pro celou lokální síť, ne jen pro PC!
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Hooligans Europe] WebSocket Server běží na portu ${PORT}`);
+    console.log(`Server bezi na portu ${PORT}`);
 });
