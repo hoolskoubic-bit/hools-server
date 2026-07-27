@@ -8,8 +8,8 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
 const players = {};
-let items = {}; // Zbraně a Šály
-let cops = {};  // NPC Policie
+let items = {}; 
+let cops = {};  
 
 const mapList = ['stadion', 'hriste', 'park', 'sidliste', 'hospoda', 'nadrazi'];
 
@@ -30,12 +30,22 @@ setInterval(() => {
     }
 }, 15000);
 
-// Generování Policie (A.C.A.B.)
+// Generování Policie (A.C.A.B.) s LEVELY
 setInterval(() => {
     if (Object.keys(cops).length < 5) {
         let randMap = mapList[Math.floor(Math.random() * mapList.length)];
         let cid = 'cop_' + Date.now();
-        cops[cid] = { id: cid, map: randMap, x: Math.random() * 800 + 100, y: Math.random() * 400 + 100, hp: 150, maxHp: 150, angle: 0, isAttacking: false, attackCooldown: false };
+        
+        // Náhodný level od 1 do 5
+        let lvl = Math.floor(Math.random() * 5) + 1; 
+        // Výpočet HP podle levelu (Lvl 1 = 150 HP, Lvl 5 = 350 HP)
+        let copHp = 100 + (lvl * 50); 
+        
+        cops[cid] = { 
+            id: cid, map: randMap, x: Math.random() * 800 + 100, y: Math.random() * 400 + 100, 
+            hp: copHp, maxHp: copHp, angle: 0, isAttacking: false, attackCooldown: false, 
+            level: lvl // Uložíme level k fízlovi
+        };
     }
 }, 30000);
 
@@ -46,7 +56,6 @@ setInterval(() => {
         let target = null;
         let minDist = 9999;
 
-        // Najdi nejbližšího hráče na stejné mapě
         for (let pid in players) {
             let p = players[pid];
             if (p.hp > 0 && p.map === cop.map) {
@@ -58,30 +67,31 @@ setInterval(() => {
         if (target) {
             if (minDist > 50) {
                 cop.angle = Math.atan2(target.y - cop.y, target.x - cop.x);
-                cop.x += Math.cos(cop.angle) * 1.5; // Fízl je trochu pomalejší
+                cop.x += Math.cos(cop.angle) * 1.5; 
                 cop.y += Math.sin(cop.angle) * 1.5;
             } else if (!cop.attackCooldown) {
-                // Úder obuškem
                 cop.isAttacking = true;
                 setTimeout(() => { if (cops[cid]) cops[cid].isAttacking = false; }, 200);
                 
-                target.hp -= 20; // Fízl dává rány za 20
+                // Poškození od fízla závisí na jeho levelu!
+                let copDamage = 15 + (cop.level * 5); // Lvl 1: 20 dmg, Lvl 5: 40 dmg
+                let playerDefense = (target.level - 1) * 2;
+                
+                target.hp -= Math.max(5, copDamage - playerDefense); 
                 io.emit('bloodSpatter', { x: target.x, y: target.y, map: target.map });
                 
                 if (target.hp <= 0) {
                     io.to(target.id).emit('youDied');
-                    // Z hráče vypadne ŠÁLA
                     let sid = 'scarf_' + Date.now();
                     items[sid] = { type: 'scarf', map: target.map, x: target.x, y: target.y, club: target.club };
                     io.emit('updateItems', items);
                 }
                 
                 cop.attackCooldown = true;
-                setTimeout(() => { if (cops[cid]) cops[cid].attackCooldown = false; }, 1500); // Útočí každého 1.5s
+                setTimeout(() => { if (cops[cid]) cops[cid].attackCooldown = false; }, 1500); 
             }
         }
     }
-    // Odešleme data klientům (hráči + fízlové + věci)
     io.emit('updateState', { players, cops, items });
 }, 1000 / 30);
 
@@ -94,7 +104,7 @@ io.on('connection', (socket) => {
             skinType: data.skinType || 'default', shirtColor: data.shirtColor || '#c0392b', skinColor: data.skinColor || '#f1c27d', hasCap: !!data.hasCap,
             hp: 100, maxHp: 100, angle: parseFloat(data.angle) || 0, isAttacking: false, map: data.map || 'hriste',
             level: parseInt(data.level) || 1, sila: parseInt(data.sila) || 0,
-            weaponName: 'Pěst', weaponDamage: 0 // Každý začíná s holýma rukama
+            weaponName: 'Pěst', weaponDamage: 0
         };
         io.emit('updateItems', items);
     });
@@ -107,7 +117,6 @@ io.on('connection', (socket) => {
             if (data.sila !== undefined) p.sila = parseInt(data.sila);
             if (data.skinType) p.skinType = data.skinType;
 
-            // Sbírání předmětů
             for (let iid in items) {
                 let it = items[iid];
                 if (it.map === p.map && Math.hypot(p.x - it.x, p.y - it.y) < 30) {
@@ -149,7 +158,6 @@ io.on('connection', (socket) => {
                     if (victim.hp <= 0) {
                         io.to(socket.id).emit('killConfirmed');
                         io.to(id).emit('youDied');
-                        // Vypadne ŠÁLA
                         let sid = 'scarf_' + Date.now();
                         items[sid] = { type: 'scarf', map: victim.map, x: victim.x, y: victim.y, club: victim.club };
                         io.emit('updateItems', items);
@@ -158,17 +166,19 @@ io.on('connection', (socket) => {
             }
         }
 
-        // Útok na FÍZLY (Cops)
+        // Útok na FÍZLY
         for (let cid in cops) {
             let cop = cops[cid];
             if (cop.hp > 0 && cop.map === attacker.map) {
                 if (Math.hypot(attacker.x - cop.x, attacker.y - cop.y) < 55) {
-                    cop.hp -= Math.max(5, 25 + attackBonus);
+                    // Policie má také obranu podle levelu!
+                    let copDefense = (cop.level - 1) * 3;
+                    cop.hp -= Math.max(5, 25 + attackBonus - copDefense);
                     io.emit('bloodSpatter', { x: cop.x, y: cop.y, map: cop.map });
                     
                     if (cop.hp <= 0) {
-                        // Když fízl umře, dá útočníkovi Token
-                        io.to(socket.id).emit('copKilledToken');
+                        // Pošleme klientovi i level zabitého fízla, ať dostane správnou odměnu
+                        io.to(socket.id).emit('copKilledToken', { level: cop.level });
                         delete cops[cid];
                     }
                 }
@@ -179,7 +189,7 @@ io.on('connection', (socket) => {
     socket.on('forceRespawn', () => {
         let p = players[socket.id];
         if (p && p.hp <= 0) {
-            p.hp = 100; p.weaponName = 'Pěst'; p.weaponDamage = 0; // Ztratí zbraň
+            p.hp = 100; p.weaponName = 'Pěst'; p.weaponDamage = 0; 
             p.x = Math.random() * 800 + 100; p.y = Math.random() * 400 + 100;
         }
     });
