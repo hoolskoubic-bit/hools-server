@@ -48,7 +48,7 @@ setInterval(() => {
     }
 }, 12000);
 
-// Generování Policie (A.C.A.B.) - zvýšený počet na mapě (až 12 policistů) a rychlejší respawn
+// Generování Policie (A.C.A.B.) - zvýšený počet na mapě (až 12 policistů)
 setInterval(() => {
     if (Object.keys(cops).length < 12) {
         let randMap = mapList[Math.floor(Math.random() * mapList.length)];
@@ -67,7 +67,7 @@ setInterval(() => {
     }
 }, 12000);
 
-// AI Policie (pohyb a útok)
+// AI Policie (pohyb, útok a šance na zatčení do vězení)
 setInterval(() => {
     for (let cid in cops) {
         let cop = cops[cid];
@@ -98,7 +98,15 @@ setInterval(() => {
                 io.emit('bloodSpatter', { x: target.x, y: target.y, map: target.map });
                 
                 if (target.hp <= 0) {
-                    io.to(target.id).emit('youDied');
+                    // 30% šance, že po zabití policajtem jde hráč do vězení na 5 minut
+                    let goesToPrison = Math.random() < 0.30;
+                    
+                    if (goesToPrison) {
+                        io.to(target.id).emit('sentToPrison');
+                    } else {
+                        io.to(target.id).emit('youDied');
+                    }
+
                     let sid = 'scarf_' + Date.now();
                     items[sid] = { type: 'scarf', map: target.map, x: target.x, y: target.y, club: target.club };
                     io.emit('updateItems', items);
@@ -171,6 +179,7 @@ io.on('connection', (socket) => {
 
         let attackBonus = ((attacker.level - 1) * 1) + (attacker.sila * 2) + attacker.weaponDamage;
 
+        // Útok na HRÁČE
         for (let id in players) {
             if (id !== socket.id && players[id].hp > 0 && players[id].map === attacker.map) {
                 const victim = players[id];
@@ -190,6 +199,7 @@ io.on('connection', (socket) => {
             }
         }
 
+        // Útok na FÍZLY
         for (let cid in cops) {
             let cop = cops[cid];
             if (cop.hp > 0 && cop.map === attacker.map) {
