@@ -23,7 +23,6 @@ setInterval(() => {
 
         let roll = Math.random();
         if (roll < 0.4) {
-            // Standardní zbraň
             let wName = 'Pěst'; let wDmg = 0;
             if (randMap === 'hospoda') { wName = 'Rozbitá láhev'; wDmg = 15; }
             else if (randMap === 'stadion') { wName = 'Sedačka'; wDmg = 20; }
@@ -32,11 +31,9 @@ setInterval(() => {
 
             items[id] = { type: 'weapon', map: randMap, x: rx, y: ry, name: wName, damage: wDmg };
         } else if (roll < 0.7) {
-            // Sběratelský token / hotovost na mapě
             let tType = Math.random() > 0.5 ? 'token' : 'cash';
             items[id] = { type: 'loot', subtype: tType, map: randMap, x: rx, y: ry, amount: tType === 'token' ? Math.floor(Math.random() * 2) + 1 : Math.floor(Math.random() * 250) + 50 };
         } else {
-            // Vzácný item ze shopu (Rare drop)
             let rareItems = [
                 { name: 'Boxer na ruku', img: 'assets/items/boxer.png', rarity: 'common' },
                 { name: 'Teleskopický obušek', img: 'assets/items/obusek.png', 'rarity': 'rare' },
@@ -51,24 +48,24 @@ setInterval(() => {
     }
 }, 12000);
 
-// Generování Policie (A.C.A.B.) s LEVELY a různou silou
+// Generování Policie (A.C.A.B.) - zvýšený počet na mapě (až 12 policistů) a rychlejší respawn
 setInterval(() => {
-    if (Object.keys(cops).length < 5) {
+    if (Object.keys(cops).length < 12) {
         let randMap = mapList[Math.floor(Math.random() * mapList.length)];
-        let cid = 'cop_' + Date.now();
+        let cid = 'cop_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
         
-        // Náhodný level od 1 do 5
         let lvl = Math.floor(Math.random() * 5) + 1; 
         let copHp = 100 + (lvl * 50); 
-        let copSila = 10 + (lvl * 5); // Různá síla policisty podle levelu
+        let copSila = 10 + (lvl * 5); 
         
         cops[cid] = { 
             id: cid, map: randMap, x: Math.random() * 800 + 100, y: Math.random() * 400 + 100, 
             hp: copHp, maxHp: copHp, angle: 0, isAttacking: false, attackCooldown: false, 
             level: lvl, sila: copSila
         };
+        io.emit('updateState', { players, cops, items });
     }
-}, 30000);
+}, 12000);
 
 // AI Policie (pohyb a útok)
 setInterval(() => {
@@ -88,8 +85,8 @@ setInterval(() => {
         if (target) {
             if (minDist > 50) {
                 cop.angle = Math.atan2(target.y - cop.y, target.x - cop.x);
-                cop.x += Math.cos(cop.angle) * 1.5; 
-                cop.y += Math.sin(cop.angle) * 1.5;
+                cop.x += Math.cos(cop.angle) * 1.8; 
+                cop.y += Math.sin(cop.angle) * 1.8;
             } else if (!cop.attackCooldown) {
                 cop.isAttacking = true;
                 setTimeout(() => { if (cops[cid]) cops[cid].isAttacking = false; }, 200);
@@ -150,12 +147,10 @@ io.on('connection', (socket) => {
                         delete items[iid];
                         io.emit('updateItems', items);
                     } else if (it.type === 'loot') {
-                        // Sběr tokenů nebo peněz přímo ze serveru
                         io.to(socket.id).emit('lootCollected', { subtype: it.subtype, amount: it.amount });
                         delete items[iid];
                         io.emit('updateItems', items);
                     } else if (it.type === 'shop_item') {
-                        // Sběr vzácného předmětu ze shopu do trezoru
                         io.to(socket.id).emit('shopItemCollected', { name: it.name, image: it.image, rarity: it.rarity });
                         delete items[iid];
                         io.emit('updateItems', items);
@@ -176,7 +171,6 @@ io.on('connection', (socket) => {
 
         let attackBonus = ((attacker.level - 1) * 1) + (attacker.sila * 2) + attacker.weaponDamage;
 
-        // Útok na HRÁČE
         for (let id in players) {
             if (id !== socket.id && players[id].hp > 0 && players[id].map === attacker.map) {
                 const victim = players[id];
@@ -196,7 +190,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        // Útok na FÍZLY
         for (let cid in cops) {
             let cop = cops[cid];
             if (cop.hp > 0 && cop.map === attacker.map) {
