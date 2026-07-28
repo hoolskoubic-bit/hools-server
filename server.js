@@ -13,24 +13,45 @@ let cops = {};
 
 const mapList = ['stadion', 'hriste', 'park', 'sidliste', 'hospoda', 'nadrazi'];
 
-// Generování zbraní
+// Generování zbraní a vzácného lootu (tokeny, peníze, shop items)
 setInterval(() => {
-    if (Object.keys(items).length < 15) {
+    if (Object.keys(items).length < 20) {
         let randMap = mapList[Math.floor(Math.random() * mapList.length)];
-        let wName = 'Pěst'; let wDmg = 0;
-        
-        if (randMap === 'hospoda') { wName = 'Rozbitá láhev'; wDmg = 15; }
-        else if (randMap === 'stadion') { wName = 'Sedačka'; wDmg = 20; }
-        else if (randMap === 'sidliste') { wName = 'Cihla'; wDmg = 10; }
-        else { wName = 'Kus klacku'; wDmg = 10; }
+        let id = 'item_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+        let rx = Math.random() * 800 + 100;
+        let ry = Math.random() * 400 + 100;
 
-        let id = 'w_' + Date.now();
-        items[id] = { type: 'weapon', map: randMap, x: Math.random() * 800 + 100, y: Math.random() * 400 + 100, name: wName, damage: wDmg };
+        let roll = Math.random();
+        if (roll < 0.4) {
+            // Standardní zbraň
+            let wName = 'Pěst'; let wDmg = 0;
+            if (randMap === 'hospoda') { wName = 'Rozbitá láhev'; wDmg = 15; }
+            else if (randMap === 'stadion') { wName = 'Sedačka'; wDmg = 20; }
+            else if (randMap === 'sidliste') { wName = 'Cihla'; wDmg = 10; }
+            else { wName = 'Kus klacku'; wDmg = 10; }
+
+            items[id] = { type: 'weapon', map: randMap, x: rx, y: ry, name: wName, damage: wDmg };
+        } else if (roll < 0.7) {
+            // Sběratelský token / hotovost na mapě
+            let tType = Math.random() > 0.5 ? 'token' : 'cash';
+            items[id] = { type: 'loot', subtype: tType, map: randMap, x: rx, y: ry, amount: tType === 'token' ? Math.floor(Math.random() * 2) + 1 : Math.floor(Math.random() * 250) + 50 };
+        } else {
+            // Vzácný item ze shopu (Rare drop)
+            let rareItems = [
+                { name: 'Boxer na ruku', img: 'assets/items/boxer.png', rarity: 'common' },
+                { name: 'Teleskopický obušek', img: 'assets/items/obusek.png', 'rarity': 'rare' },
+                { name: 'Kožená bunda', img: 'assets/items/bunda.png', 'rarity': 'rare' },
+                { name: 'Červená dýmovnice', img: 'assets/items/pyro.png', rarity: 'common' }
+            ];
+            let picked = rareItems[Math.floor(Math.random() * rareItems.length)];
+            items[id] = { type: 'shop_item', map: randMap, x: rx, y: ry, name: picked.name, image: picked.img, rarity: picked.rarity };
+        }
+
         io.emit('updateItems', items);
     }
-}, 15000);
+}, 12000);
 
-// Generování Policie (A.C.A.B.) s LEVELY
+// Generování Policie (A.C.A.B.) s LEVELY a různou silou
 setInterval(() => {
     if (Object.keys(cops).length < 5) {
         let randMap = mapList[Math.floor(Math.random() * mapList.length)];
@@ -38,13 +59,13 @@ setInterval(() => {
         
         // Náhodný level od 1 do 5
         let lvl = Math.floor(Math.random() * 5) + 1; 
-        // Výpočet HP podle levelu (Lvl 1 = 150 HP, Lvl 5 = 350 HP)
         let copHp = 100 + (lvl * 50); 
+        let copSila = 10 + (lvl * 5); // Různá síla policisty podle levelu
         
         cops[cid] = { 
             id: cid, map: randMap, x: Math.random() * 800 + 100, y: Math.random() * 400 + 100, 
             hp: copHp, maxHp: copHp, angle: 0, isAttacking: false, attackCooldown: false, 
-            level: lvl // Uložíme level k fízlovi
+            level: lvl, sila: copSila
         };
     }
 }, 30000);
@@ -73,8 +94,7 @@ setInterval(() => {
                 cop.isAttacking = true;
                 setTimeout(() => { if (cops[cid]) cops[cid].isAttacking = false; }, 200);
                 
-                // Poškození od fízla závisí na jeho levelu!
-                let copDamage = 15 + (cop.level * 5); // Lvl 1: 20 dmg, Lvl 5: 40 dmg
+                let copDamage = 15 + (cop.level * 5) + Math.floor(cop.sila / 2); 
                 let playerDefense = (target.level - 1) * 2;
                 
                 target.hp -= Math.max(5, copDamage - playerDefense); 
@@ -119,7 +139,7 @@ io.on('connection', (socket) => {
 
             for (let iid in items) {
                 let it = items[iid];
-                if (it.map === p.map && Math.hypot(p.x - it.x, p.y - it.y) < 30) {
+                if (it.map === p.map && Math.hypot(p.x - it.x, p.y - it.y) < 35) {
                     if (it.type === 'scarf') {
                         io.to(socket.id).emit('scarfCollected');
                         delete items[iid];
@@ -127,6 +147,16 @@ io.on('connection', (socket) => {
                     } else if (it.type === 'weapon') {
                         p.weaponName = it.name;
                         p.weaponDamage = it.damage;
+                        delete items[iid];
+                        io.emit('updateItems', items);
+                    } else if (it.type === 'loot') {
+                        // Sběr tokenů nebo peněz přímo ze serveru
+                        io.to(socket.id).emit('lootCollected', { subtype: it.subtype, amount: it.amount });
+                        delete items[iid];
+                        io.emit('updateItems', items);
+                    } else if (it.type === 'shop_item') {
+                        // Sběr vzácného předmětu ze shopu do trezoru
+                        io.to(socket.id).emit('shopItemCollected', { name: it.name, image: it.image, rarity: it.rarity });
                         delete items[iid];
                         io.emit('updateItems', items);
                     }
@@ -171,13 +201,11 @@ io.on('connection', (socket) => {
             let cop = cops[cid];
             if (cop.hp > 0 && cop.map === attacker.map) {
                 if (Math.hypot(attacker.x - cop.x, attacker.y - cop.y) < 55) {
-                    // Policie má také obranu podle levelu!
                     let copDefense = (cop.level - 1) * 3;
                     cop.hp -= Math.max(5, 25 + attackBonus - copDefense);
                     io.emit('bloodSpatter', { x: cop.x, y: cop.y, map: cop.map });
                     
                     if (cop.hp <= 0) {
-                        // Pošleme klientovi i level zabitého fízla, ať dostane správnou odměnu
                         io.to(socket.id).emit('copKilledToken', { level: cop.level });
                         delete cops[cid];
                     }
