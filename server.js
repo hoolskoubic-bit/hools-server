@@ -13,7 +13,7 @@ let cops = {};
 
 const mapList = ['stadion', 'hriste', 'park', 'sidliste', 'hospoda', 'nadrazi'];
 
-// Generování zbraní a vzácného lootu (tokeny, peníze, shop items)
+// Generování zbraní a vzácného lootu (POUZE PRO NORMÁLNÍ MAPY)
 setInterval(() => {
     if (Object.keys(items).length < 20) {
         let randMap = mapList[Math.floor(Math.random() * mapList.length)];
@@ -48,7 +48,7 @@ setInterval(() => {
     }
 }, 12000);
 
-// Generování Policie (A.C.A.B.) - zvýšený počet na mapě (až 12 policistů)
+// Generování Policie (A.C.A.B.)
 setInterval(() => {
     if (Object.keys(cops).length < 12) {
         let randMap = mapList[Math.floor(Math.random() * mapList.length)];
@@ -67,7 +67,7 @@ setInterval(() => {
     }
 }, 12000);
 
-// AI Policie (pohyb, útok a šance na zatčení do vězení)
+// AI Policie (pohyb a útok)
 setInterval(() => {
     for (let cid in cops) {
         let cop = cops[cid];
@@ -76,7 +76,8 @@ setInterval(() => {
 
         for (let pid in players) {
             let p = players[pid];
-            if (p.hp > 0 && p.map === cop.map) {
+            // Policajti ignorují válečné hráče, útočí jen na běžné mapy
+            if (p.hp > 0 && p.map === cop.map && !p.isWar) {
                 let d = Math.hypot(p.x - cop.x, p.y - cop.y);
                 if (d < minDist) { minDist = d; target = p; }
             }
@@ -98,14 +99,9 @@ setInterval(() => {
                 io.emit('bloodSpatter', { x: target.x, y: target.y, map: target.map });
                 
                 if (target.hp <= 0) {
-                    // 30% šance, že po zabití policajtem jde hráč do vězení na 5 minut
                     let goesToPrison = Math.random() < 0.30;
-                    
-                    if (goesToPrison) {
-                        io.to(target.id).emit('sentToPrison');
-                    } else {
-                        io.to(target.id).emit('youDied');
-                    }
+                    if (goesToPrison) io.to(target.id).emit('sentToPrison');
+                    else io.to(target.id).emit('youDied');
 
                     let sid = 'scarf_' + Date.now();
                     items[sid] = { type: 'scarf', map: target.map, x: target.x, y: target.y, club: target.club };
@@ -129,7 +125,10 @@ io.on('connection', (socket) => {
             skinType: data.skinType || 'default', shirtColor: data.shirtColor || '#c0392b', skinColor: data.skinColor || '#f1c27d', hasCap: !!data.hasCap,
             hp: 100, maxHp: 100, angle: parseFloat(data.angle) || 0, isAttacking: false, map: data.map || 'hriste',
             level: parseInt(data.level) || 1, sila: parseInt(data.sila) || 0,
-            weaponName: 'Pěst', weaponDamage: 0
+            weaponName: 'Pěst', weaponDamage: 0,
+            isWar: !!data.isWar, // Příznak války
+            allianceId: data.allianceId || 0,
+            matchId: data.matchId || 0
         };
         io.emit('updateItems', items);
     });
@@ -142,33 +141,35 @@ io.on('connection', (socket) => {
             if (data.sila !== undefined) p.sila = parseInt(data.sila);
             if (data.skinType) p.skinType = data.skinType;
 
-            for (let iid in items) {
-                let it = items[iid];
-                if (it.map === p.map && Math.hypot(p.x - it.x, p.y - it.y) < 35) {
-                    if (it.type === 'scarf') {
-                        io.to(socket.id).emit('scarfCollected');
-                        delete items[iid];
-                        io.emit('updateItems', items);
-                    } else if (it.type === 'weapon') {
-                        p.weaponName = it.name;
-                        p.weaponDamage = it.damage;
-                        delete items[iid];
-                        io.emit('updateItems', items);
-                    } else if (it.type === 'loot') {
-                        io.to(socket.id).emit('lootCollected', { subtype: it.subtype, amount: it.amount });
-                        delete items[iid];
-                        io.emit('updateItems', items);
-                    } else if (it.type === 'shop_item') {
-                        io.to(socket.id).emit('shopItemCollected', { name: it.name, image: it.image, rarity: it.rarity });
-                        delete items[iid];
-                        io.emit('updateItems', items);
+            // Sbírání předmětů (pouze pokud není ve válce)
+            if (!p.isWar) {
+                for (let iid in items) {
+                    let it = items[iid];
+                    if (it.map === p.map && Math.hypot(p.x - it.x, p.y - it.y) < 35) {
+                        if (it.type === 'scarf') {
+                            io.to(socket.id).emit('scarfCollected');
+                            delete items[iid]; io.emit('updateItems', items);
+                        } else if (it.type === 'weapon') {
+                            p.weaponName = it.name; p.weaponDamage = it.damage;
+                            delete items[iid]; io.emit('updateItems', items);
+                        } else if (it.type === 'loot') {
+                            io.to(socket.id).emit('lootCollected', { subtype: it.subtype, amount: it.amount });
+                            delete items[iid]; io.emit('updateItems', items);
+                        } else if (it.type === 'shop_item') {
+                            io.to(socket.id).emit('shopItemCollected', { name: it.name, image: it.image, rarity: it.rarity });
+                            delete items[iid]; io.emit('updateItems', items);
+                        }
                     }
                 }
             }
         }
     });
 
-    socket.on('changeMap', (newMap) => { if (players[socket.id]) players[socket.id].map = newMap; });
+    socket.on('changeMap', (newMap) => { 
+        if (players[socket.id] && !players[socket.id].isWar) {
+            players[socket.id].map = newMap; 
+        }
+    });
 
     socket.on('attack', () => {
         const attacker = players[socket.id];
@@ -183,34 +184,47 @@ io.on('connection', (socket) => {
         for (let id in players) {
             if (id !== socket.id && players[id].hp > 0 && players[id].map === attacker.map) {
                 const victim = players[id];
+                
+                // Ve válce nesmíme zranit vlastní alianci!
+                if (attacker.isWar && victim.isWar && attacker.allianceId === victim.allianceId) {
+                    continue; // Přeskočíme spoluhráče
+                }
+
                 if (Math.hypot(attacker.x - victim.x, attacker.y - victim.y) < 55) {
                     let defense = (victim.level - 1) * 2;
                     victim.hp -= Math.max(5, 25 - defense + attackBonus);
                     io.emit('bloodSpatter', { x: victim.x, y: victim.y, map: victim.map });
                     
                     if (victim.hp <= 0) {
-                        io.to(socket.id).emit('killConfirmed');
+                        if (attacker.isWar) {
+                            // Pošleme útočníkovi potvrzení do war okna (aby si připsal bod)
+                            io.to(socket.id).emit('warKillConfirmed');
+                        } else {
+                            io.to(socket.id).emit('killConfirmed');
+                            let sid = 'scarf_' + Date.now();
+                            items[sid] = { type: 'scarf', map: victim.map, x: victim.x, y: victim.y, club: victim.club };
+                            io.emit('updateItems', items);
+                        }
                         io.to(id).emit('youDied');
-                        let sid = 'scarf_' + Date.now();
-                        items[sid] = { type: 'scarf', map: victim.map, x: victim.x, y: victim.y, club: victim.club };
-                        io.emit('updateItems', items);
                     }
                 }
             }
         }
 
-        // Útok na FÍZLY
-        for (let cid in cops) {
-            let cop = cops[cid];
-            if (cop.hp > 0 && cop.map === attacker.map) {
-                if (Math.hypot(attacker.x - cop.x, attacker.y - cop.y) < 55) {
-                    let copDefense = (cop.level - 1) * 3;
-                    cop.hp -= Math.max(5, 25 + attackBonus - copDefense);
-                    io.emit('bloodSpatter', { x: cop.x, y: cop.y, map: cop.map });
-                    
-                    if (cop.hp <= 0) {
-                        io.to(socket.id).emit('copKilledToken', { level: cop.level });
-                        delete cops[cid];
+        // Útok na FÍZLY (Policajti se nevyskytují ve válce)
+        if (!attacker.isWar) {
+            for (let cid in cops) {
+                let cop = cops[cid];
+                if (cop.hp > 0 && cop.map === attacker.map) {
+                    if (Math.hypot(attacker.x - cop.x, attacker.y - cop.y) < 55) {
+                        let copDefense = (cop.level - 1) * 3;
+                        cop.hp -= Math.max(5, 25 + attackBonus - copDefense);
+                        io.emit('bloodSpatter', { x: cop.x, y: cop.y, map: cop.map });
+                        
+                        if (cop.hp <= 0) {
+                            io.to(socket.id).emit('copKilledToken', { level: cop.level });
+                            delete cops[cid];
+                        }
                     }
                 }
             }
